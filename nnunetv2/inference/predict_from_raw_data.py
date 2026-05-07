@@ -34,6 +34,7 @@ from nnunetv2.utilities.json_export import recursive_fix_for_json_export
 from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 from nnunetv2.utilities.utils import create_lists_from_splitted_dataset_folder
+from nnunetv2.preprocessing.preprocessors.default_preprocessor import DefaultPreprocessor
 
 
 class nnUNetPredictor(object):
@@ -599,6 +600,7 @@ class nnUNetPredictor(object):
             if not self.allow_tqdm and self.verbose:
                 print(f'running prediction: {len(slicers)} steps')
 
+            _patch_idx = 0
             with tqdm(desc=None, total=len(slicers), disable=not self.allow_tqdm) as pbar:
                 while True:
                     item = queue.get()
@@ -607,6 +609,14 @@ class nnUNetPredictor(object):
                         break
                     workon, sl = item
                     prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(results_device)
+
+                    # Save patch-0 raw input and logits for C++ comparison.
+                    if DefaultPreprocessor._DEBUG_DIR and _patch_idx == 0:
+                        np.save(os.path.join(DefaultPreprocessor._DEBUG_DIR, 'sw_patch0_input_py.npy'),
+                                workon.cpu().float().numpy())        # [1, 1, pD, pH, pW]
+                        np.save(os.path.join(DefaultPreprocessor._DEBUG_DIR, 'sw_patch0_logits_py.npy'),
+                                prediction[None].cpu().float().numpy())  # [1, C, pD, pH, pW]
+                    _patch_idx += 1
 
                     if self.use_gaussian:
                         prediction *= gaussian
@@ -677,6 +687,10 @@ class nnUNetPredictor(object):
             empty_cache(self.device)
             # revert padding
             predicted_logits = predicted_logits[(slice(None), *slicer_revert_padding[1:])]
+            if DefaultPreprocessor._DEBUG_DIR:
+                # Save aggregated logits in original (unpadded) space for C++ comparison.
+                np.save(os.path.join(DefaultPreprocessor._DEBUG_DIR, 'sw_agg_logits_py.npy'),
+                        predicted_logits.cpu().float().numpy())  # [C, origD, origH, origW]
         return predicted_logits
 
     def predict_from_files_sequential(self,

@@ -1,3 +1,5 @@
+import os
+import time
 from typing import Union, List
 
 import numpy as np
@@ -9,6 +11,7 @@ from nnunetv2.configuration import default_num_processes
 from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetBlosc2
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
+from nnunetv2.preprocessing.preprocessors.default_preprocessor import DefaultPreprocessor
 
 
 def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits: Union[torch.Tensor, np.ndarray],
@@ -36,6 +39,12 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
     if not return_probabilities:
         # this has a faster computation path becasue we can skip the softmax in regular (not region based) trainig
         segmentation = label_manager.convert_logits_to_segmentation(predicted_logits)
+        if DefaultPreprocessor._DEBUG_DIR:
+            # Save argmax in cropped space (before crop revert) for comparison with C++ step4_argmax_cpp.npy.
+            # Shape is in nnUNet's transposed+cropped space; matches C++ [D,H,W] when transpose_forward is identity.
+            _seg_np = segmentation.cpu().numpy() if isinstance(segmentation, torch.Tensor) else np.array(segmentation)
+            np.save(os.path.join(DefaultPreprocessor._DEBUG_DIR, 'step4_argmax_py.npy'), _seg_np)
+            print('[Debug] Saved step4_argmax_py.npy  shape=' + str(list(_seg_np.shape)))
     else:
         predicted_probabilities = label_manager.apply_inference_nonlin(predicted_logits)
         segmentation = label_manager.convert_probabilities_to_segmentation(predicted_probabilities)
@@ -53,6 +62,12 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
 
     # revert transpose
     segmentation_reverted_cropping = segmentation_reverted_cropping.transpose(plans_manager.transpose_backward)
+
+    if DefaultPreprocessor._DEBUG_DIR:
+        # Save final segmentation in original image space for comparison with C++ step5_segmentation_cpp.npy.
+        np.save(os.path.join(DefaultPreprocessor._DEBUG_DIR, 'step5_segmentation_py.npy'), segmentation_reverted_cropping)
+        print('[Debug] Saved step5_segmentation_py.npy  shape=' + str(list(segmentation_reverted_cropping.shape)))
+
     if return_probabilities:
         # revert cropping
         predicted_probabilities = label_manager.revert_cropping_on_probabilities(predicted_probabilities,

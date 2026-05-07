@@ -13,6 +13,7 @@
 #    limitations under the License.
 import math
 import multiprocessing
+import os
 import shutil
 from time import sleep
 from typing import Tuple
@@ -36,6 +37,24 @@ from nnunetv2.utilities.utils import get_filenames_of_train_images_and_targets
 
 
 class DefaultPreprocessor(object):
+    # Set NNUNET_DEBUG_DIR in the environment to enable debug image saving; unset to disable.
+    _DEBUG_DIR: str | None = os.environ.get('NNUNET_DEBUG_DIR')
+
+    @staticmethod
+    def _debug_write_nifti(data: np.ndarray, spacing: list,
+                           filename_prefix: str) -> None:
+        if not DefaultPreprocessor._DEBUG_DIR:
+            return
+        os.makedirs(DefaultPreprocessor._DEBUG_DIR, exist_ok=True)
+        for _c in range(data.shape[0]):
+            _sitk_img = SimpleITK.GetImageFromArray(data[_c])
+            _sitk_img.SetSpacing([float(s) for s in reversed(spacing)])
+            suffix = '' if data.shape[0] == 1 else f'_channel{_c}'
+            SimpleITK.WriteImage(
+                _sitk_img,
+                os.path.join(DefaultPreprocessor._DEBUG_DIR,
+                             f'{filename_prefix}{suffix}.nii.gz'))
+
     def __init__(self, verbose: bool = True):
         self.verbose = verbose
         """
@@ -47,6 +66,10 @@ class DefaultPreprocessor(object):
                      dataset_json: Union[dict, str]):
         # let's not mess up the inputs!
         data = data.astype(np.float32)  # this creates a copy
+
+        if self._DEBUG_DIR:
+            self._debug_write_nifti(data, properties['spacing'], 'step0_input_py')
+
         if seg is not None:
             assert data.shape[1:] == seg.shape[1:], "Shape mismatch between image and segmentation. Please fix your dataset and make use of the --verify_dataset_integrity flag to ensure everything is correct"
             seg = np.copy(seg)
@@ -68,6 +91,10 @@ class DefaultPreprocessor(object):
         # print(data.shape, seg.shape)
         properties['shape_after_cropping_and_before_resampling'] = data.shape[1:]
 
+        if self._DEBUG_DIR:
+            self._debug_write_nifti(data, original_spacing, 'step1_cropped_py')
+        print(f'cropping bbox: {bbox}, shape before cropping: {shape_before_cropping}, shape after cropping: {data.shape[1:]}')
+
         # resample
         target_spacing = configuration_manager.spacing  # this should already be transposed
 
@@ -83,6 +110,9 @@ class DefaultPreprocessor(object):
         data = self._normalize(data, seg, configuration_manager,
                                plans_manager.foreground_intensity_properties_per_channel)
 
+        if self._DEBUG_DIR:
+            self._debug_write_nifti(data, original_spacing, 'step2_normalized_py')
+
         # print('current shape', data.shape[1:], 'current_spacing', original_spacing,
         #       '\ntarget shape', new_shape, 'target_spacing', target_spacing)
         old_shape = data.shape[1:]
@@ -91,6 +121,13 @@ class DefaultPreprocessor(object):
         if self.verbose:
             print(f'old shape: {old_shape}, new_shape: {new_shape}, old_spacing: {original_spacing}, '
                   f'new_spacing: {target_spacing}, fn_data: {configuration_manager.resampling_fn_data}')
+
+        if self._DEBUG_DIR:
+            # Write resampled image data to .nii.gz for inspection
+            self._debug_write_nifti(data, target_spacing, 'step3_resampled_py')
+            # Save as .npy for direct numerical comparison with C++ output.
+            # Shape is (C, Z, Y, X). C++ saves as (D, H, W) = (Z, Y, X), so py[0] matches cpp directly.
+            np.save(os.path.join(self._DEBUG_DIR, 'step3_resampled_data_py.npy'), data)
 
         # if we have a segmentation, sample foreground locations for oversampling and add those to properties
         if has_seg:
