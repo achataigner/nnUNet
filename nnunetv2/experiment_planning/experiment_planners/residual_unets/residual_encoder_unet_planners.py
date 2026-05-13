@@ -244,6 +244,31 @@ class nnUNetPlannerResEncM(ResEncUNetPlanner):
         self.max_dataset_covered = 1
 
 
+class nnUNetPlannerResEncMLinearInterpolation(nnUNetPlannerResEncM):
+    """
+    Same as nnUNetPlannerResEncM but uses linear interpolation (order=1) for data resampling in 3d_fullres.
+    """
+    def __init__(self, dataset_name_or_id: Union[str, int],
+                 gpu_memory_target_in_gb: float = 8,
+                 preprocessor_name: str = 'DefaultPreprocessor',
+                 plans_name: str = 'nnUNetResEncUNetMPlansLinearInterpolation',
+                 overwrite_target_spacing: Union[List[float], Tuple[float, ...]] = None,
+                 suppress_transpose: bool = False):
+        super().__init__(dataset_name_or_id, gpu_memory_target_in_gb, preprocessor_name, plans_name,
+                         overwrite_target_spacing, suppress_transpose)
+
+    def generate_data_identifier(self, configuration_name: str) -> str:
+        if configuration_name == '3d_fullres':
+            return 'nnUNetPlans_3d_fullres_linear_interpolation'
+        return super().generate_data_identifier(configuration_name)
+
+    def determine_resampling(self, *args, **kwargs):
+        resampling_data, resampling_data_kwargs, resampling_seg, resampling_seg_kwargs = \
+            super().determine_resampling(*args, **kwargs)
+        resampling_data_kwargs['order'] = 1
+        return resampling_data, resampling_data_kwargs, resampling_seg, resampling_seg_kwargs
+
+
 class nnUNetPlannerResEncL(ResEncUNetPlanner):
     """
     Target is ~24 GB VRAM max -> RTX 4090, Titan RTX, Quadro 6000
