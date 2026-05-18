@@ -1,3 +1,6 @@
+import time
+moduleImportStartTime = time.perf_counter()
+
 import inspect
 import itertools
 import multiprocessing
@@ -36,6 +39,9 @@ from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, Config
 from nnunetv2.utilities.utils import create_lists_from_splitted_dataset_folder
 from nnunetv2.preprocessing.preprocessors.default_preprocessor import DefaultPreprocessor
 
+moduleImportEndTime = time.perf_counter()
+if os.environ.get('NNUNET_PRINT_TIMING'):
+    print(f"[TIMING] Time to import predict_from_raw_data module={moduleImportEndTime - moduleImportStartTime:.2f}s")
 
 class nnUNetPredictor(object):
     def __init__(self,
@@ -753,6 +759,7 @@ class nnUNetPredictor(object):
 
         ret = []
         for li, of, sps in zip(list_of_lists_or_source_folder, output_filename_truncated, seg_from_prev_stage_files):
+            preprocessStartTime = time.perf_counter()
             data, seg, data_properties = preprocessor.run_case(
                 li,
                 sps,
@@ -760,24 +767,43 @@ class nnUNetPredictor(object):
                 self.configuration_manager,
                 self.dataset_json
             )
+            preprocessEndTime = time.perf_counter()
+            if os.environ.get('NNUNET_PRINT_TIMING'):
+                print(f"[TIMING] preprocess={preprocessEndTime - preprocessStartTime:.2f}s")
 
             print(f'perform_everything_on_device: {self.perform_everything_on_device}')
 
+            predictLogitsStartTime = time.perf_counter()
             prediction = self.predict_logits_from_preprocessed_data(torch.from_numpy(data)).cpu()
+            predictLogitsEndTime = time.perf_counter()
+            if os.environ.get('NNUNET_PRINT_TIMING'):
+                print(f"[TIMING] predict_logits={predictLogitsEndTime - predictLogitsStartTime:.2f}s")
 
             if of is not None:
+                exportStartTime = time.perf_counter()
                 export_prediction_from_logits(prediction, data_properties, self.configuration_manager, self.plans_manager,
                   self.dataset_json, of, save_probabilities)
+                exportEndTime = time.perf_counter()
+                if os.environ.get('NNUNET_PRINT_TIMING'):
+                    print(f"[TIMING] export_prediction_from_logits={exportEndTime - exportStartTime:.2f}s")
             else:
+                convertStartTime = time.perf_counter()
                 ret.append(convert_predicted_logits_to_segmentation_with_correct_shape(prediction, self.plans_manager,
                      self.configuration_manager, self.label_manager,
                      data_properties,
                      save_probabilities))
+                convertEndTime = time.perf_counter()
+                if os.environ.get('NNUNET_PRINT_TIMING'):
+                    print(f"[TIMING] convert_predicted_logits_to_segmentation_with_correct_shape={convertEndTime - convertStartTime:.2f}s")
 
+        clearCacheStartTime = time.perf_counter()
         # clear lru cache
         compute_gaussian.cache_clear()
         # clear device cache
         empty_cache(self.device)
+        clearCacheEndTime = time.perf_counter()
+        if os.environ.get('NNUNET_PRINT_TIMING'):
+            print(f"[TIMING] clear_cache={clearCacheEndTime - clearCacheStartTime:.2f}s")
         return ret
 
 def _getDefaultValue(env: str, dtype: type, default: any,) -> any:
